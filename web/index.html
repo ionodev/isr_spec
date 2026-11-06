@@ -4,7 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ISR Spectrum Explorer</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=dev">
+<script>
+  // shows any startup failure in the figure area, including a module that fails to load
+  window.startupFailed = (msg) => {
+    const el = document.getElementById("loading");
+    if (el) { el.hidden = false; el.textContent = (window.appReady ? "Error: " : "Could not start: ") + msg; }
+  };
+  addEventListener("error", (e) => startupFailed(e.message || (e.target && (e.target.src || e.target.href)) || "a file failed to load"), true);
+  addEventListener("unhandledrejection", (e) => startupFailed(String((e.reason && e.reason.message) || e.reason)));
+</script>
 </head>
 <body>
 <header class="bar">
@@ -23,6 +32,7 @@
 
 <main>
   <div class="figure" id="figure">
+    <p class="loading" id="loading">Loading…</p>
     <canvas class="lines"></canvas>
     <canvas class="field" hidden></canvas>
     <canvas class="axes"></canvas>
@@ -30,6 +40,6 @@
   <div id="warnings" class="warnings"></div>
 </main>
 
-<script type="module" src="app.js"></script>
+<script type="module" src="app.js?v=dev" onerror="startupFailed('app.js could not be loaded')"></script>
 </body>
 </html>

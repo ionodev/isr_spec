@@ -29,6 +29,8 @@ jobs:
         run: cargo test --release
       - name: Build the WebAssembly package
         run: wasm-pack build --release --target web --out-dir web/pkg --no-typescript
+      - name: Stamp asset URLs with the commit, so browsers never mix versions
+        run: tools/version_assets.sh "${GITHUB_SHA::8}"
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web

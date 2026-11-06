@@ -507,11 +507,13 @@ async function main() {
   try {
     fig = new Figure(document.getElementById("figure"));
   } catch (err) {
-    document.getElementById("figure").innerHTML = `<p style="padding:24px">The plots need WebGL2 (${err.message ?? err}).</p>`;
+    document.getElementById("loading").textContent = `The plots need WebGL2 (${err.message ?? err}).`;
     fig = null;
   }
   if (fig) {
     await applyTheme();
+    document.getElementById("loading").hidden = true;
+    window.appReady = true;
     new ResizeObserver(() => draw()).observe(document.getElementById("figure"));
     matchMedia("(prefers-color-scheme: dark)").addEventListener("change", async () => { await applyTheme(); draw(); });
   }
@@ -519,6 +521,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  document.body.insertAdjacentHTML("beforeend", `<p style="padding:24px">Could not start: ${err.message ?? err}</p>`);
   console.error(err);
+  window.startupFailed(err.message ?? String(err));
 });
