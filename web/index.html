@@ -7,78 +7,27 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header>
-  <h1>ISR Spectrum Explorer</h1>
-  <p class="sub">Incoherent scatter spectrum of a collisionless, magnetized plasma
-    (Kudeki &amp; Milla 2011, eqs.&nbsp;38&ndash;41), ported from
-    <a href="https://github.com/jvierine/isr_spec">jvierine/isr_spec</a> to Rust and
-    WebAssembly, drawn with WebGL. Move a slider and the spectrum is recomputed.</p>
+<header class="bar">
+  <span class="brand">ISR spectrum</span>
+  <nav class="menus">
+    <div class="menu"><button class="menu-btn" aria-expanded="false">Plasma</button><div class="panel" id="m-plasma"></div></div>
+    <div class="menu"><button class="menu-btn" aria-expanded="false">Ions</button><div class="panel" id="m-ions"></div></div>
+    <div class="menu"><button class="menu-btn" aria-expanded="false">Radar</button><div class="panel" id="m-radar"></div></div>
+    <div class="menu"><button class="menu-btn" aria-expanded="false">View</button><div class="panel" id="m-view"></div></div>
+    <div class="menu"><button class="menu-btn" aria-expanded="false">Numbers</button><div class="panel wide" id="m-numbers"></div></div>
+    <div class="menu right"><button class="menu-btn" aria-expanded="false">About</button><div class="panel wide" id="m-about"></div></div>
+  </nav>
 </header>
 
-<main class="layout">
-  <aside id="controls" aria-label="Parameters"></aside>
+<div id="summary" class="summary" aria-live="polite"></div>
 
-  <section id="plots">
-    <div class="toolbar">
-      <label><input type="checkbox" id="show-terms"> Show electron and ion terms</label>
-      <label><input type="checkbox" id="lock-y"> Lock power axis</label>
-      <button id="pin">Pin as reference</button>
-      <button id="unpin" disabled>Clear reference</button>
-      <button id="auto-span">Fit span to ion line</button>
-      <button id="export">Export CSV</button>
-      <button id="reset">Reset</button>
-    </div>
-
-    <div class="pair">
-      <figure class="plot">
-        <div class="canvas-wrap"><canvas class="gl" id="gl-abs"></canvas><canvas class="ov" id="ov-abs"></canvas></div>
-        <figcaption>Absolute power spectral density: changes in total power show here.</figcaption>
-      </figure>
-      <figure class="plot">
-        <div class="canvas-wrap"><canvas class="gl" id="gl-norm"></canvas><canvas class="ov" id="ov-norm"></canvas></div>
-        <figcaption>Normalized to the peak: only the shape (width, peak separation, dip, shift) shows here.</figcaption>
-      </figure>
-    </div>
-
-    <div id="warnings" aria-live="polite"></div>
-
-    <div class="readouts">
-      <table id="measured"><caption>Measured from the spectrum</caption><tbody></tbody></table>
-      <table id="expected"><caption>Expected from the parameters</caption><tbody></tbody></table>
-    </div>
-
-    <figure class="plot sweep">
-      <div class="sweep-bar">
-        <label>Sweep <select id="sweep-param"></select></label>
-        <label>Colour <select id="sweep-mode">
-          <option value="shape">each row normalized to its peak (shape)</option>
-          <option value="abs">absolute power (dB)</option>
-        </select></label>
-        <span id="sweep-status"></span>
-      </div>
-      <div class="canvas-wrap tall"><canvas class="gl" id="gl-sweep"></canvas><canvas class="ov" id="ov-sweep"></canvas></div>
-      <figcaption>Spectrum (horizontal) against one parameter over its whole slider range (vertical),
-        all others fixed. The dashed line marks the current value.</figcaption>
-    </figure>
-
-    <details class="notes">
-      <summary>What the model includes, and its limits</summary>
-      <ul>
-        <li>Electrons and up to two ion species, Maxwellian, the same ion temperature for both.</li>
-        <li>No collisions, as in isr_spec. Within about 1&deg; of perpendicular to B, Coulomb
-          collisions control the spectrum (Milla &amp; Kudeki 2011), so the spectrum shown there
-          is not physical.</li>
-        <li>The line-of-sight velocity moves the whole plasma: it enters as the Doppler-shifted
-          frequency &omega; &minus; <b>k</b>&middot;<b>v</b> of every species (K&amp;M eq. 40), which
-          shifts the spectrum by &minus;2<i>vf</i>/<i>c</i>. Positive <i>v</i> is away from the radar.</li>
-        <li>Total power is the integral over the frequency span shown; widen the span to include
-          all of the ion line, or the plasma lines.</li>
-        <li>Numerics: Gordeyev integrals by a trapezoid rule with end corrections, for all
-          frequencies at once by a chirp-z transform. Agrees with the Python isr_spec to about
-          1e-9 of the peak (see <code>validation/</code>).</li>
-      </ul>
-    </details>
-  </section>
+<main>
+  <div class="figure" id="figure">
+    <canvas class="lines"></canvas>
+    <canvas class="field" hidden></canvas>
+    <canvas class="axes"></canvas>
+  </div>
+  <div id="warnings" class="warnings"></div>
 </main>
 
 <script type="module" src="app.js"></script>

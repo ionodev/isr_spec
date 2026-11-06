@@ -9,7 +9,9 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 rustfft = "6"
-wasm-bindgen = "0.2"
+# rustplotlib's WebGL2 line plot and field (heatmap) views; it pins wasm-bindgen
+rustplotlib-web = { git = "https://github.com/jvierine/rustplotlib", rev = "96e8aaa" }
+wasm-bindgen = "=0.2.129"
 
 [profile.release]
 opt-level = 3

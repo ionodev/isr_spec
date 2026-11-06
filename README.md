@@ -7,7 +7,8 @@ frequency, Nₑ, Tₑ, Tᵢ, ion velocity, ion composition, B, aspect angle) and
 the spectrum is recomputed. The model is a Rust/WebAssembly port of
 [jvierine/isr_spec](https://github.com/jvierine/isr_spec): a collisionless,
 magnetized plasma in the framework of Kudeki and Milla (2011), eqs. 38-41.
-Plots are drawn with WebGL2.
+Plots are drawn by [rustplotlib](https://github.com/jvierine/rustplotlib)'s
+WebGL2 views; all symbols and equations are typeset in LaTeX.
 
 ## Build
 
@@ -17,6 +18,13 @@ python3 -m http.server 8000 --directory web  # open http://localhost:8000
 ```
 
 Pushes to `main` are built and deployed by `.github/workflows/pages.yml`.
+
+The LaTeX labels are typeset ahead of time into `web/tex/glyphs.json`. After
+editing `web/tex/labels.json`, regenerate them (needs TeX with `dvisvgm`):
+
+```sh
+cargo run --release --manifest-path tools/typeset/Cargo.toml
+```
 
 ## Differences from isr_spec
 

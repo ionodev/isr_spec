@@ -5,6 +5,8 @@ pub mod czt;
 pub mod physics;
 
 use physics::{isr_spectrum, Params};
+// the plots: rustplotlib's WebGL2 views, exported from the same WebAssembly module
+pub use rustplotlib_web::{FieldView, LinePlot};
 use rustfft::FftPlanner;
 use wasm_bindgen::prelude::*;
 

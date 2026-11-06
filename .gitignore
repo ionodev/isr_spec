@@ -3,3 +3,5 @@
 /validation/*.csv
 __pycache__/
 /validation/shots/
+/tools/typeset/target
+/tools/typeset/.latex-cache
