@@ -4,8 +4,8 @@
 import { LinePlot, FieldView } from "./pkg/isr_spec_web.js";
 import { drawTex, tickKeys, texWidth } from "./tex.js";
 
-const TICK_PT = 1.35;  // px per pt for tick labels (10 pt -> 13.5 px)
-const LABEL_PT = 1.45; // px per pt for axis labels
+export const TICK_PT = 1.35;  // px per pt for tick labels (10 pt -> 13.5 px)
+export const LABEL_PT = 1.45; // px per pt for axis labels
 
 // viridis, 10 stops
 export const VIRIDIS = [
@@ -47,10 +47,10 @@ export class Figure {
     this.field = new FieldView(this.fieldCanvas);
   }
 
-  setTheme({ images, ink, faint }) {
-    this.images = images;
+  // raster: LaTeX labels rasterized at TICK_PT and LABEL_PT (tex.js texRaster)
+  setTheme({ raster, ink }) {
+    this.images = raster;
     this.ink = ink;
-    this.faint = faint;
   }
 
   // y ticks and their LaTeX keys for an axes height ah
@@ -72,11 +72,16 @@ export class Figure {
     const widest = Math.max(...yt.map((t) => texWidth(t.keys))) * TICK_PT;
     const m = { left: Math.max(64, Math.ceil(widest) + 40), right, top, bottom };
     this.yt = yt;
-    this.axes.width = Math.round(w * dpr);
-    this.axes.height = Math.round(h * dpr);
+    // reallocate the canvas only when its size changes
+    const cw = Math.round(w * dpr), ch = Math.round(h * dpr);
+    if (this.axes.width !== cw || this.axes.height !== ch) {
+      this.axes.width = cw;
+      this.axes.height = ch;
+    }
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.ctx.clearRect(0, 0, w, h);
-    return { w, h, dpr, m, ax: { x: m.left, y: m.top, w: w - m.left - m.right, h: h - m.top - m.bottom } };
+    this.L = { w, h, dpr, m, ax: { x: m.left, y: m.top, w: w - m.left - m.right, h: h - m.top - m.bottom } };
+    return this.L;
   }
 
   // open axes with outward ticks, as in rustplotlib's figures
@@ -149,11 +154,18 @@ export class Figure {
     const a = L.ax, f = this.fieldCanvas;
     f.hidden = false;
     Object.assign(f.style, { left: `${a.x}px`, top: `${a.y}px`, width: `${a.w}px`, height: `${a.h}px` });
-    f.width = Math.round(a.w * L.dpr);
-    f.height = Math.round(a.h * L.dpr);
+    const fw = Math.round(a.w * L.dpr), fh = Math.round(a.h * L.dpr);
+    if (f.width !== fw || f.height !== fh) {
+      f.width = fw;
+      f.height = fh;
+    }
     this.field.set_data(nx, ny, values);
-    this.field.set_scale(scale[0], scale[1], 0, 1, 1);
-    this.field.set_colormap(new Float32Array(VIRIDIS.flat()));
+    if (this.fieldScale !== `${scale}`) {
+      // set_scale resets the colour map, so set both
+      this.field.set_scale(scale[0], scale[1], 0, 1, 1);
+      this.field.set_colormap(new Float32Array(VIRIDIS.flat()));
+      this.fieldScale = `${scale}`;
+    }
     this.field.draw();
 
     const { sy } = this.frame(L, { xr, yr, ylog, xLabel, yLabel });

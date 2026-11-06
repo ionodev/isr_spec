@@ -1,8 +1,13 @@
 // LaTeX labels typeset by rustplotlib (tools/typeset) into SVG. Every label
 // shares one box height and depth, with its baseline at y = 0, so pieces can be
 // placed side by side: words, symbols, digits of numbers, units.
+//
+// Each label's outlines are added to the page once (a hidden sprite) and
+// referenced with <use>; on canvases, labels are rasterized once per size.
 
 let G = null; // { font_pt, glyphs: { key: { svg, box: [x, y, w, h] } } }
+let sprite = null;
+const inSprite = new Set();
 
 export async function loadTex(url) {
   G = await (await fetch(url)).json();
@@ -51,15 +56,29 @@ export function tickKeys(v, step) {
 
 // ---------- HTML ----------
 
+function ensureSymbol(key) {
+  if (inSprite.has(key)) return;
+  if (!sprite) {
+    sprite = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    sprite.setAttribute("aria-hidden", "true");
+    sprite.style.cssText = "position:absolute;width:0;height:0;overflow:hidden";
+    sprite.innerHTML = "<defs></defs>";
+    document.body.prepend(sprite);
+  }
+  sprite.firstChild.insertAdjacentHTML("beforeend", `<g id="tx-${key}">${G.glyphs[key].svg}</g>`);
+  inSprite.add(key);
+}
+
 // inline SVG for a sequence of label keys; sizes in em follow the CSS font size.
-// gap: extra space (em) before keys listed in `spaceBefore`
+// spaceBefore: keys that get a thin space before them
 export function tex(keys, { spaceBefore = [] } = {}) {
   if (typeof keys === "string") keys = [keys];
   const em = G.font_pt;
   return keys.map((key) => {
-    const { g, x0, y, w, h } = advance(key);
+    const { x0, y, w, h } = advance(key);
+    ensureSymbol(key);
     const gap = spaceBefore.includes(key) ? "margin-left:0.25em;" : "";
-    return `<svg class="tex" viewBox="${x0} ${y} ${w} ${h}" style="${gap}width:${w / em}em;height:${h / em}em;vertical-align:${-(y + h) / em}em" fill="currentColor" aria-hidden="true">${g.svg}</svg>`;
+    return `<svg class="tex" viewBox="${x0} ${y} ${w} ${h}" style="${gap}width:${w / em}em;height:${h / em}em;vertical-align:${-(y + h) / em}em" fill="currentColor" aria-hidden="true"><use href="#tx-${key}"/></svg>`;
   }).join("");
 }
 
@@ -73,16 +92,27 @@ export function texValue(v, unitKey, sig = 4) {
 
 // ---------- canvas ----------
 
-// decoded images of all labels in one colour, for drawing on a 2D canvas
-export async function texImages(color) {
+// Labels drawn on canvases (ticks, axis labels, legend, colour bar), each
+// rasterized once per size: { key@size: canvas }. Rasterizing once avoids the
+// browser re-rendering SVG images in every frame.
+const CANVAS_KEY = /^(n\d|nd|nm|e-?\d+|ax_|lg_|cb_|sw_)/;
+
+export async function texRaster(color, sizes, dpr) {
   const out = new Map();
-  await Promise.all(Object.keys(G.glyphs).map(async (key) => {
+  const keys = Object.keys(G.glyphs).filter((k) => CANVAS_KEY.test(k));
+  await Promise.all(keys.map(async (key) => {
     const { g, x0, y, w, h } = advance(key);
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="${x0} ${y} ${w} ${h}" width="${w * 4}" height="${h * 4}" fill="${color}">${g.svg}</svg>`;
     const img = new Image();
     img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
     await img.decode();
-    out.set(key, img);
+    for (const s of sizes) {
+      const c = document.createElement("canvas");
+      c.width = Math.max(1, Math.ceil(w * s * dpr));
+      c.height = Math.max(1, Math.ceil(h * s * dpr));
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      out.set(`${key}@${s}`, c);
+    }
   }));
   return out;
 }
@@ -92,19 +122,20 @@ export function texWidth(keys) {
   return keys.reduce((s, k) => s + advance(k).w, 0);
 }
 
-// draw keys with their common baseline at (x, y) CSS px; size = px per pt;
-// align: "left" | "center" | "right"; rotate: draw upwards (for a y label)
-export function drawTex(ctx, images, keys, x, y, size, { align = "left", rotate = false, middle = false } = {}) {
+// draw keys with their common baseline at (x, y) CSS px; size = px per pt (one
+// of the rasterized sizes); align: "left" | "center" | "right"; rotate: draw
+// upwards; middle: centre the box vertically on y instead of the baseline
+export function drawTex(ctx, raster, keys, x, y, size, { align = "left", rotate = false, middle = false } = {}) {
   const total = texWidth(keys) * size;
   ctx.save();
   ctx.translate(x, y);
   if (rotate) ctx.rotate(-Math.PI / 2);
   let px = align === "center" ? -total / 2 : align === "right" ? -total : 0;
-  // middle: centre the strut box vertically on y instead of the baseline
-  const shift = middle ? (G.glyphs[keys[0]] ? -(G.glyphs[keys[0]].box[1] + G.glyphs[keys[0]].box[3] / 2) * size : 0) : 0;
+  const first = G.glyphs[keys[0]];
+  const shift = middle && first ? -(first.box[1] + first.box[3] / 2) * size : 0;
   for (const key of keys) {
     const { y: top, w, h } = advance(key);
-    ctx.drawImage(images.get(key), px, top * size + shift, w * size, h * size);
+    ctx.drawImage(raster.get(`${key}@${size}`), px, top * size + shift, w * size, h * size);
     px += w * size;
   }
   ctx.restore();

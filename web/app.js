@@ -1,6 +1,6 @@
 import init, { Engine, PlasmaParams } from "./pkg/isr_spec_web.js";
-import { loadTex, tex, texValue, numKeys, tickKeys, texImages } from "./tex.js";
-import { Figure } from "./figure.js";
+import { loadTex, tex, texValue, numKeys, texRaster } from "./tex.js";
+import { Figure, TICK_PT, LABEL_PT } from "./figure.js";
 
 // physical constants (CODATA 2018)
 const C = 299792458, KB = 1.380649e-23, QE = 1.602176634e-19, EPS0 = 8.8541878128e-12;
@@ -18,15 +18,19 @@ const PARAMS = [
   { key: "radar_freq", menu: "radar", label: "p_freq", unit: "u_MHz", scale: 1e6, min: 30, max: 1300, log: true, def: 440.2 },
   { key: "b", menu: "radar", label: "p_b", unit: "u_uT", scale: 1e-6, min: 0, max: 70, def: 50 },
   { key: "alpha_deg", menu: "radar", label: "p_alpha", unit: "u_deg", scale: 1, min: 0, max: 90, def: 72, hint: "h_alpha" },
-  { key: "span", menu: "view", label: "p_span", unit: "u_kHz", scale: 1e3, min: 0.2, max: 20000, log: true, def: 25 },
 ];
 const P = Object.fromEntries(PARAMS.map((p) => [p.key, p]));
 const SWEEPABLE = ["radar_freq", "ne", "te", "ti", "v_los", "frac2", "b", "alpha_deg"];
-const DEFAULTS = { mass1: 16, mass2: 1, mode: "spectrum", scale: "power", sweep: "te", terms: 0, lock: 0 };
+// view: frequency axis x0..x1 (Hz); power axis py0..py1 (dB); shape axis sy0..sy1
+const DEFAULTS = {
+  mass1: 16, mass2: 1, mode: "spectrum", scale: "power", sweep: "te", terms: 0,
+  x0: -25e3, x1: 25e3, py0: NaN, py1: NaN, sy0: 0, sy1: 1.05,
+};
 const NPTS = 1000;
+const X_LIMIT = 25e6; // the frequency axis stays within +-25 MHz
 
 const state = {};
-let engine, plasma, fig, last = null, reference = null, lockedY = null, theme = null;
+let engine, plasma, fig, last = null, reference = null, theme = null;
 
 // ---------- sliders ----------
 
@@ -44,6 +48,15 @@ function tidy(p, v) {
   if (v === 0) return 0;
   const mag = 10 ** (Math.floor(Math.log10(Math.abs(v))) - (p.log ? 2 : 3));
   return Math.round(v / mag) * mag;
+}
+
+// replace an element's HTML only when it changes: rebuilding inline SVG on
+// every frame is what makes a page like this slow and memory-hungry
+function setHTML(el, html) {
+  if (el._html !== html) {
+    el.innerHTML = html;
+    el._html = html;
+  }
 }
 
 function sliderHTML(p) {
@@ -73,18 +86,16 @@ function buildMenus() {
     <div class="sub">Plot</div>${segHTML("mode", [["spectrum", "Spectrum"], ["sweep", "Sweep"]])}
     <div class="sub">Show</div>${segHTML("scale", [["power", "Power (dB)"], ["shape", "Shape (normalized)"]])}
     <div class="sweep-only"><div class="sub">Sweep over</div>${segHTML("sweep", SWEEPABLE.map((k) => [k, tex(`k_${k}`)]))}</div>
-    ${byMenu("view")}
     <div class="spectrum-only">
       <label class="check"><input type="checkbox" data-flag="terms"> Electron and ion terms</label>
-      <label class="check"><input type="checkbox" data-flag="lock"> Hold the power axis</label>
     </div>
     <div class="actions">
-      <button id="fit">Fit span</button>
       <button id="pin" class="spectrum-only">Pin reference</button>
       <button id="unpin" class="spectrum-only" disabled>Clear reference</button>
       <button id="export">CSV</button>
       <button id="reset">Reset</button>
-    </div>`;
+    </div>
+    <div class="hint">Wheel or drag an axis to stretch it; drag the plot to move it.</div>`;
   document.getElementById("m-about").innerHTML = `<div class="about">
     <p>Incoherent scatter spectrum of a collisionless, magnetized plasma of electrons and up to two ion
     species (Kudeki and Milla, 2011). For each species <i>s</i>,</p>
@@ -103,6 +114,7 @@ function buildMenus() {
     const open = b.getAttribute("aria-expanded") !== "true";
     closeAll(b);
     b.setAttribute("aria-expanded", String(open));
+    if (open && b.nextElementSibling.id === "m-numbers") showNumbers();
   }));
   document.addEventListener("click", (e) => { if (!e.target.closest(".menu")) closeAll(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAll(); });
@@ -123,7 +135,6 @@ function buildMenus() {
   for (const box of document.querySelectorAll("[data-flag]")) {
     box.addEventListener("change", () => set(box.dataset.flag, box.checked ? 1 : 0));
   }
-  document.getElementById("fit").addEventListener("click", fitSpan);
   document.getElementById("pin").addEventListener("click", () => {
     reference = { f: last.f.slice(), total: last.total.slice() };
     document.getElementById("unpin").disabled = false;
@@ -135,7 +146,8 @@ function buildMenus() {
     draw();
   });
   document.getElementById("export").addEventListener("click", exportCsv);
-  document.getElementById("reset").addEventListener("click", () => { reset(); showAll(); update(); });
+  document.getElementById("reset").addEventListener("click", () => { reset(); showAll(); fitView(); });
+  document.getElementById("fit-view").addEventListener("click", fitView);
 }
 
 // click on a value to type it
@@ -161,9 +173,9 @@ function showAll() {
   for (const div of document.querySelectorAll(".ctl")) {
     const p = P[div.dataset.key];
     div.querySelector("input[type=range]").value = toSlider(p, state[p.key]);
-    div.querySelector(".val").innerHTML = p.unit
+    setHTML(div.querySelector(".val"), p.unit
       ? texValue(state[p.key], p.unit)
-      : tex(numKeys(Math.round(state[p.key] * 100), 3).concat("u_pct"));
+      : tex(numKeys(Math.round(state[p.key] * 100), 3).concat("u_pct")));
   }
   for (const seg of document.querySelectorAll(".seg")) {
     for (const b of seg.querySelectorAll("button")) {
@@ -179,8 +191,8 @@ function showAll() {
 
 function set(key, v) {
   state[key] = v;
-  if (key === "lock" && v) lockedY = null;
   showAll();
+  if (key === "scale" && state.mode === "spectrum" && !Number.isFinite(state.py0)) fitY();
   update();
 }
 
@@ -197,7 +209,7 @@ function showSummary() {
     const pct = (f) => tex(numKeys(Math.round(f * 100), 3).concat("u_pct"));
     ions = `${tex(`ion_${state.mass1}`)} ${pct(1 - state.frac2)}, ${tex(`ion_${state.mass2}`)} ${pct(state.frac2)}`;
   }
-  document.getElementById("summary").innerHTML = [
+  setHTML(document.getElementById("summary"), [
     item("s_freq", state.radar_freq, "u_MHz"),
     item("s_ne", state.ne, "u_m3"),
     item("s_te", state.te, "u_K"),
@@ -206,7 +218,7 @@ function showSummary() {
     `<span>${ions}</span>`,
     item("s_b", state.b, "u_uT"),
     item("s_alpha", state.alpha_deg, "u_deg"),
-  ].join("");
+  ].join(""));
 }
 
 // ---------- URL ----------
@@ -222,9 +234,18 @@ function readHash() {
   if (!["power", "shape"].includes(state.scale)) state.scale = "power";
   if (!SWEEPABLE.includes(state.sweep)) state.sweep = "te";
   for (const k of ["mass1", "mass2"]) if (!IONS.includes(state[k])) state[k] = DEFAULTS[k];
+  if (!(state.x1 > state.x0)) Object.assign(state, { x0: DEFAULTS.x0, x1: DEFAULTS.x1 });
+  if (!(state.sy1 > state.sy0)) Object.assign(state, { sy0: DEFAULTS.sy0, sy1: DEFAULTS.sy1 });
+  if (!(state.py1 > state.py0)) Object.assign(state, { py0: NaN, py1: NaN });
 }
+// at most a few times a second: browsers throttle frequent history updates
+let hashTimer = 0;
 function writeHash() {
-  history.replaceState(null, "", "#" + new URLSearchParams(Object.entries(state).map(([k, v]) => [k, String(v)])).toString());
+  clearTimeout(hashTimer);
+  hashTimer = setTimeout(() => {
+    const entries = Object.entries(state).map(([k, v]) => [k, typeof v === "number" ? String(Number(v.toPrecision(6))) : String(v)]);
+    history.replaceState(null, "", "#" + new URLSearchParams(entries).toString());
+  }, 300);
 }
 
 // ---------- the model ----------
@@ -243,11 +264,11 @@ function plasmaFrom(s) {
   return plasma;
 }
 
+// the spectrum over the visible frequency axis
 function computeSpectrum(s, n) {
-  const span = s.span * 1e3;
-  const out = engine.spectrum(plasmaFrom(s), -span, span, n);
+  const out = engine.spectrum(plasmaFrom(s), s.x0, s.x1, n);
   const f = new Float64Array(n);
-  for (let i = 0; i < n; i++) f[i] = -span + (2 * span * i) / (n - 1);
+  for (let i = 0; i < n; i++) f[i] = s.x0 + ((s.x1 - s.x0) * i) / (n - 1);
   return { f, total: out.subarray(0, n), electron: out.subarray(n, 2 * n), ion: out.subarray(2 * n, 3 * n) };
 }
 
@@ -310,11 +331,14 @@ function texFreq(hz, sig = 4) {
   return texValue(hz, "u_Hz", sig);
 }
 
+const numbersOpen = () => document.getElementById("m-numbers").previousElementSibling.getAttribute("aria-expanded") === "true";
+
 function showNumbers() {
+  if (!last || !numbersOpen()) return;
   const a = analyse(last), t = theory(state);
   const row = (label, value) => `<tr><td>${tex(label)}</td><td>${value}</td></tr>`;
-  document.getElementById("m-numbers").innerHTML = `<table class="nums">
-    <tr><th colspan="2">Measured from the spectrum</th></tr>
+  setHTML(document.getElementById("m-numbers"), `<table class="nums">
+    <tr><th colspan="2">Measured from the spectrum in view</th></tr>
     ${row("r_power", tex(numKeys(a.power / state.ne, 3)))}
     ${a.sep !== null ? row("r_sep", texFreq(a.sep, 3)) : ""}
     ${a.dip !== null ? row("r_dip", tex(numKeys(a.dip, 3))) : ""}
@@ -328,12 +352,15 @@ function showNumbers() {
     ${row("x_kh", tex(numKeys(t.kh, 3)))}
     ${row("x_eta", tex(numKeys(t.eta, 3)))}
     ${row("x_fpe", texFreq(t.fpe, 4))}
-  </table>`;
-  const w = [];
+  </table>`);
+}
+
+function showWarnings() {
+  const t = theory(state), w = [];
   if (state.alpha_deg < 1) w.push("w_perp");
   if (t.kh > 0.3) w.push("w_kh");
-  if (state.mode === "spectrum" && a.edge > 0.01) w.push("w_edge");
-  document.getElementById("warnings").innerHTML = w.map((k) => `<div>${tex(k)}</div>`).join("");
+  if (state.mode === "spectrum" && last && analyse(last).edge > 0.01) w.push("w_edge");
+  setHTML(document.getElementById("warnings"), w.map((k) => `<div>${tex(k)}</div>`).join(""));
 }
 
 // ---------- drawing ----------
@@ -350,22 +377,31 @@ function readTheme() {
   };
 }
 
+let rasterDpr = 0;
 async function applyTheme() {
   theme = readTheme();
-  fig.setTheme({ images: await texImages(theme.ink), ink: theme.ink });
+  rasterDpr = Math.min(window.devicePixelRatio || 1, 2);
+  fig.setTheme({ raster: await texRaster(theme.ink, [TICK_PT, LABEL_PT], rasterDpr), ink: theme.ink });
 }
 
 function xAxis() {
-  return state.span >= 1000 ? { div: 1e6, label: "ax_f_MHz" } : { div: 1e3, label: "ax_f_kHz" };
+  return Math.max(Math.abs(state.x0), Math.abs(state.x1)) >= 1e6
+    ? { div: 1e6, label: "ax_f_MHz" } : { div: 1e3, label: "ax_f_kHz" };
 }
+
+const powerY = (arr) => Array.from(arr, (v) => (v > 0 ? 10 * Math.log10(v) : NaN));
+const shapeY = (arr) => {
+  let m = 0;
+  for (const v of arr) if (v > m) m = v;
+  return Array.from(arr, (v) => v / m);
+};
 
 function drawSpectrum() {
   if (!fig || !last) return;
-  const ax = xAxis(), span = (state.span * 1e3) / ax.div;
+  const ax = xAxis();
   const x = Array.from(last.f, (v) => v / ax.div);
   const power = state.scale === "power";
-  const tr = power ? (arr) => Array.from(arr, (v) => (v > 0 ? 10 * Math.log10(v) : NaN))
-                   : (arr) => { const m = Math.max(...arr); return Array.from(arr, (v) => v / m); };
+  const tr = power ? powerY : shapeY;
   const series = [];
   if (reference) {
     // fewer points, so the dash pattern (in segments) stays visible
@@ -379,19 +415,8 @@ function drawSpectrum() {
     series.push({ x, y: tr(last.ion), rgb: theme.ion, width: 1.5, legend: "lg_i" });
   }
   series.push({ x, y: tr(last.total), rgb: theme.total, width: 2, legend: reference || (state.terms && power) ? "lg_total" : null });
-
-  let yr;
-  if (!power) {
-    yr = [0, 1.05];
-  } else if (state.lock && lockedY) {
-    yr = lockedY;
-  } else {
-    let top = -Infinity;
-    for (const s of series) for (const v of s.y) if (v > top) top = v;
-    yr = [Math.floor((top - 60) / 10) * 10, Math.ceil((top + 3) / 5) * 5];
-    lockedY = yr;
-  }
-  fig.drawLines({ series, xr: [-span, span], yr, xLabel: ax.label, yLabel: power ? "ax_sdb" : "ax_snorm" });
+  const yr = power ? [state.py0, state.py1] : [state.sy0, state.sy1];
+  fig.drawLines({ series, xr: [state.x0 / ax.div, state.x1 / ax.div], yr, xLabel: ax.label, yLabel: power ? "ax_sdb" : "ax_snorm" });
 }
 
 // ---------- sweep ----------
@@ -402,30 +427,33 @@ let sweepJob = 0, sweepRows = [];
 function startSweep() {
   const job = ++sweepJob;
   if (!fig) return;
-  const p = P[state.sweep] ?? { key: "frac2", min: 0, max: 1 };
+  const p = P[state.sweep];
   const vals = Array.from({ length: SWEEP_ROWS }, (_, r) => fromSlider(p, (r / (SWEEP_ROWS - 1)) * STEPS));
   const base = { ...state };
-  sweepRows = [];
+  const rows = [];
   const step = () => {
     if (job !== sweepJob || state.mode !== "sweep") return;
     const t0 = performance.now();
-    while (sweepRows.length < SWEEP_ROWS && performance.now() - t0 < 30) {
-      sweepRows.push(computeSpectrum({ ...base, [p.key]: vals[sweepRows.length] }, SWEEP_COLS).total.slice());
+    while (rows.length < SWEEP_ROWS && performance.now() - t0 < 30) {
+      rows.push(computeSpectrum({ ...base, [p.key]: vals[rows.length] }, SWEEP_COLS).total.slice());
     }
+    sweepRows = rows;
     drawSweep();
-    if (sweepRows.length < SWEEP_ROWS) requestAnimationFrame(step);
+    if (rows.length < SWEEP_ROWS) requestAnimationFrame(step);
   };
   requestAnimationFrame(step);
 }
 
+const sweepValues = new Float32Array(SWEEP_ROWS * SWEEP_COLS);
 function drawSweep() {
   if (!fig) return;
   const p = P[state.sweep];
-  const values = new Float32Array(SWEEP_ROWS * SWEEP_COLS).fill(NaN);
+  const values = sweepValues.fill(NaN);
   let scale;
   if (state.scale === "shape") {
     sweepRows.forEach((S, r) => {
-      const m = Math.max(...S);
+      let m = 0;
+      for (const v of S) if (v > m) m = v;
       for (let c = 0; c < SWEEP_COLS; c++) values[r * SWEEP_COLS + c] = S[c] / m;
     });
     scale = [0, 1];
@@ -441,10 +469,10 @@ function drawSweep() {
     top = Math.ceil(top / 10) * 10;
     scale = [top - 50, top];
   }
-  const ax = xAxis(), span = (state.span * 1e3) / ax.div;
+  const ax = xAxis();
   fig.drawField({
     values, nx: SWEEP_COLS, ny: SWEEP_ROWS,
-    xr: [-span, span], xLabel: ax.label,
+    xr: [state.x0 / ax.div, state.x1 / ax.div], xLabel: ax.label,
     yr: [p.min, p.max], ylog: !!p.log, yLabel: `sw_${p.key}`,
     yTickFormat: p.log ? (v) => numKeys(v, 2) : null,
     scale, cbLabel: state.scale === "shape" ? "cb_norm" : "cb_db",
@@ -461,11 +489,13 @@ function update() {
   requestAnimationFrame(() => {
     pending = false;
     last = computeSpectrum(state, NPTS);
+    if (!Number.isFinite(state.py0)) fitY();
     showNumbers();
+    showWarnings();
     writeHash();
     clearTimeout(sweepTimer);
     if (state.mode === "sweep") {
-      if (sweepRows.length) drawSweep(); // keep the old sweep, with the new marker, until the new one is ready
+      if (sweepRows.length) drawSweep(); // the old sweep with the new marker, until the new one is ready
       sweepTimer = setTimeout(startSweep, 120);
     } else {
       drawSpectrum();
@@ -476,12 +506,116 @@ function draw() {
   if (state.mode === "sweep") drawSweep(); else drawSpectrum();
 }
 
-function fitSpan() {
+// ---------- view: fixed axes, stretched or moved by the user ----------
+
+// the power axis from the current spectrum: 60 dB below its peak to just above
+function fitY() {
+  if (!last) return;
+  let top = -Infinity;
+  for (const v of last.total) if (v > 0) top = Math.max(top, 10 * Math.log10(v));
+  if (!Number.isFinite(top)) return;
+  state.py0 = Math.floor((top - 60) / 10) * 10;
+  state.py1 = Math.ceil((top + 3) / 5) * 5;
+  Object.assign(state, { sy0: 0, sy1: 1.05 });
+}
+
+// the frequency axis around the ion line (and its Doppler shift), then the power axis
+function fitView() {
   const t = theory(state);
   const mi = Math.min(state.mass1, state.frac2 > 0 ? state.mass2 : Infinity) * AMU;
   const ci = Math.sqrt((KB * state.ti) / mi);
-  const width = t.fia + (4 * t.k * ci) / (2 * Math.PI);
-  set("span", tidy(P.span, Math.min(P.span.max, Math.max(P.span.min, (Math.abs(t.fd) + 1.6 * width) / 1e3))));
+  const half = Math.min(X_LIMIT, Math.abs(t.fd) + 1.6 * (t.fia + (4 * t.k * ci) / (2 * Math.PI)));
+  const mag = 10 ** Math.floor(Math.log10(half));
+  const nice = Math.ceil(half / mag * 2) / 2 * mag;
+  Object.assign(state, { x0: -nice, x1: nice });
+  last = computeSpectrum(state, NPTS);
+  fitY();
+  update();
+}
+
+function clampX(x0, x1) {
+  const span = Math.min(2 * X_LIMIT, Math.max(50, x1 - x0));
+  const mid = Math.min(X_LIMIT - span / 2, Math.max(-X_LIMIT + span / 2, (x0 + x1) / 2));
+  return [mid - span / 2, mid + span / 2];
+}
+
+// stretch (factor < 1) or compress (factor > 1) an axis about a data value
+function scaleX(anchor, factor) {
+  [state.x0, state.x1] = clampX(anchor + (state.x0 - anchor) * factor, anchor + (state.x1 - anchor) * factor);
+}
+function scaleY(anchor, factor) {
+  const [a, b] = state.scale === "power" ? ["py0", "py1"] : ["sy0", "sy1"];
+  const lo = anchor + (state[a] - anchor) * factor, hi = anchor + (state[b] - anchor) * factor;
+  if (hi - lo > 1e-3 && hi - lo < 1e4) { state[a] = lo; state[b] = hi; }
+}
+
+function installNavigation(box) {
+  // where the pointer is: the axes area, or the strip with the x or y axis
+  const region = (e) => {
+    const L = fig.L, r = box.getBoundingClientRect();
+    if (!L) return null;
+    const px = e.clientX - r.left, py = e.clientY - r.top, a = L.ax;
+    const inX = px >= a.x && px <= a.x + a.w, inY = py >= a.y && py <= a.y + a.h;
+    const where = inX && inY ? "plot" : inX && py > a.y + a.h ? "x" : inY && px < a.x ? "y" : null;
+    // data coordinates of the pointer (Hz, and the shown y)
+    const fx = state.x0 + ((px - a.x) / a.w) * (state.x1 - state.x0);
+    const [y0, y1] = state.scale === "power" ? [state.py0, state.py1] : [state.sy0, state.sy1];
+    const fy = y1 - ((py - a.y) / a.h) * (y1 - y0);
+    return { where, px, py, fx, fy, a };
+  };
+  const sweep = () => state.mode === "sweep";
+  const afterX = () => update(); // the frequency axis sets what is computed
+  const afterY = () => { draw(); writeHash(); };
+
+  box.addEventListener("wheel", (e) => {
+    const q = region(e);
+    if (!q || !q.where) return;
+    e.preventDefault();
+    const factor = Math.exp(e.deltaY * 0.0015);
+    if (q.where !== "y") scaleX(q.fx, factor);
+    if (q.where !== "x" && !sweep()) scaleY(q.fy, factor);
+    q.where === "y" ? afterY() : afterX();
+  }, { passive: false });
+
+  let drag = null;
+  box.addEventListener("pointerdown", (e) => {
+    if (e.target.closest("button")) return;
+    const q = region(e);
+    if (!q || !q.where || (sweep() && q.where === "y")) return;
+    try { box.setPointerCapture(e.pointerId); } catch { /* not a live pointer */ }
+    drag = { ...q, x0: state.x0, x1: state.x1, py0: state.py0, py1: state.py1, sy0: state.sy0, sy1: state.sy1 };
+  });
+  box.addEventListener("pointermove", (e) => {
+    const q = region(e);
+    box.style.cursor = drag ? (drag.where === "plot" ? "grabbing" : "") :
+      q && q.where === "x" ? "ew-resize" : q && q.where === "y" && !sweep() ? "ns-resize" : q && q.where === "plot" ? "grab" : "";
+    if (!drag) return;
+    const r = box.getBoundingClientRect();
+    const dx = e.clientX - r.left - drag.px, dy = e.clientY - r.top - drag.py, a = drag.a;
+    Object.assign(state, { x0: drag.x0, x1: drag.x1, py0: drag.py0, py1: drag.py1, sy0: drag.sy0, sy1: drag.sy1 });
+    if (drag.where === "plot") {
+      // move the view with the pointer
+      const sx = (drag.x1 - drag.x0) / a.w;
+      [state.x0, state.x1] = clampX(drag.x0 - dx * sx, drag.x1 - dx * sx);
+      if (!sweep()) {
+        const [k0, k1] = state.scale === "power" ? ["py0", "py1"] : ["sy0", "sy1"];
+        const sy = (drag[k1] - drag[k0]) / a.h;
+        state[k0] = drag[k0] + dy * sy;
+        state[k1] = drag[k1] + dy * sy;
+      }
+      afterX();
+    } else if (drag.where === "x") {
+      scaleX(drag.fx, Math.exp(-dx / 150)); // drag right: stretch
+      afterX();
+    } else {
+      scaleY(drag.fy, Math.exp(dy / 150)); // drag up: stretch
+      afterY();
+    }
+  });
+  const end = () => { drag = null; };
+  box.addEventListener("pointerup", end);
+  box.addEventListener("pointercancel", end);
+  box.addEventListener("dblclick", (e) => { if (region(e)?.where) fitView(); });
 }
 
 function exportCsv() {
@@ -514,7 +648,11 @@ async function main() {
     await applyTheme();
     document.getElementById("loading").hidden = true;
     window.appReady = true;
-    new ResizeObserver(() => draw()).observe(document.getElementById("figure"));
+    installNavigation(document.getElementById("figure"));
+    new ResizeObserver(async () => {
+      if (Math.min(window.devicePixelRatio || 1, 2) !== rasterDpr) await applyTheme();
+      draw();
+    }).observe(document.getElementById("figure"));
     matchMedia("(prefers-color-scheme: dark)").addEventListener("change", async () => { await applyTheme(); draw(); });
   }
   update();

@@ -116,13 +116,20 @@ table.nums td:last-child { text-align: right; white-space: nowrap; padding-left:
 .about a { color: var(--accent); }
 
 /* parameter summary and figure */
+.subbar { display: flex; align-items: flex-start; gap: 12px; padding: 10px 16px 0 20px; }
 .summary {
+  flex: 1;
   display: flex;
   flex-wrap: wrap;
   gap: 4px 20px;
-  padding: 10px 20px 0;
   color: var(--muted);
 }
+.fit {
+  font: inherit; font-size: 14px; color: var(--text); background: var(--panel);
+  border: 1px solid var(--border); border-radius: 6px; padding: 2px 10px; cursor: pointer; white-space: nowrap;
+}
+.fit:hover { border-color: var(--accent); }
+.figure { touch-action: none; user-select: none; }
 main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 4px 12px 10px; }
 .figure { position: relative; flex: 1; min-height: 320px; }
 .figure canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
@@ -135,7 +142,8 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 4
 @media (max-width: 640px) {
   .bar { gap: 8px; padding: 6px 8px; flex-wrap: wrap; }
   .brand { display: none; }
-  .summary { padding: 8px 16px 0; gap: 2px 14px; font-size: 14px; }
+  .subbar { padding: 8px 12px 0 16px; }
+  .summary { gap: 2px 14px; font-size: 14px; }
   main { padding: 4px 4px 8px; }
   .panel { position: fixed; left: 16px; right: 16px; top: 52px; width: auto; }
   .menu.right .panel { left: 16px; right: 16px; }
