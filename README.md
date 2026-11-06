@@ -11,7 +11,15 @@ Made for exercise 18 (learning objective Q8) of FYS-3810: vary one parameter
 at a time and explain the changes in power, width, peak separation, shape and
 Doppler shift, keeping absolute power apart from the normalized shape.
 
-## Run it
+## Open it
+
+**https://ionodev.github.io/isr_spec/**
+
+It needs a browser with WebAssembly and WebGL2 (any current Firefox,
+Chrome, Edge or Safari). Every push to `main`
+rebuilds and republishes the page (`.github/workflows/pages.yml`).
+
+## Run it locally
 
 Needs the Rust toolchain with the `wasm32-unknown-unknown` target and
 `wasm-pack` (installed on revontuli under `~/.cargo`).
@@ -22,9 +30,7 @@ python3 -m http.server 8000 --directory web  # then open http://localhost:8000
 ```
 
 The page is static (HTML, JavaScript, one `.wasm` file), so the `web/`
-folder can be served by any web server, e.g. GitHub Pages. It needs a
-browser with WebAssembly and WebGL2 (any current Firefox, Chrome, Edge or
-Safari).
+folder can be served by any web server.
 
 ## What the page shows
 
@@ -105,7 +111,8 @@ them (`validation/comparison.png`):
 
 ```sh
 cargo build --release --example dump
-python3 validation/compare_isr_spec.py ~/isr_project/isr_analysis  # folder with isr_spec.py
+git clone https://github.com/jvierine/isr_spec /tmp/isr_spec
+python3 validation/compare_isr_spec.py /tmp/isr_spec
 cargo test --release   # Gordeyev integrals vs brute-force quadrature, Gaussian limit,
                        # ion-line power, Doppler shift
 ```

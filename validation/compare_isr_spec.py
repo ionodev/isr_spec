@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Compare the Rust spectrum with jvierine/isr_spec's isr_spectrum.
 
-Usage: compare_isr_spec.py PATH_TO_DIR_WITH_isr_spec.py
+Usage: compare_isr_spec.py DIR_WITH_isr_spec.py
+(a clone of https://github.com/jvierine/isr_spec)
 
 Runs both on the same cases (v_los = 0, since isr_spec has no drift) and
 prints the largest difference relative to each spectrum's peak, the
@@ -17,6 +18,11 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+import scipy.integrate
+
+# isr_spec.py calls scipy.integrate.simps, which scipy 1.14 renamed simpson
+if not hasattr(scipy.integrate, "simps"):
+    scipy.integrate.simps = scipy.integrate.simpson
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DUMP = os.path.join(HERE, "..", "target", "release", "examples", "dump")
@@ -62,6 +68,8 @@ def run_rust(case):
 
 
 def main():
+    if len(sys.argv) != 2:
+        sys.exit(__doc__)
     isr_spec_dir = os.path.abspath(sys.argv[1])
     with Pool(len(CASES)) as pool:
         py = pool.starmap(run_python, [(c, isr_spec_dir) for c in CASES])
